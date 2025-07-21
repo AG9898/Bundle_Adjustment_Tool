@@ -70,9 +70,14 @@ class BundleAdjustmentData:
     
     Attributes:
         camera_poses: List of camera poses
-        points_3d: 3D points in world coordinates (Nx3 array)
-        observations: List of observations
+        points_3d: 3D points in world coordinates (Nx3 array, dense, zero-based indexing)
+        observations: List of observations (point_index must match points_3d row)
         camera_model: Camera model for projection
+    
+    Note:
+        - The points_3d array must use dense, zero-based indexing (0 to N-1, no gaps).
+        - Every Observation's point_index must be a valid index in points_3d.
+        - When constructing from external data, use remap_observations_to_dense_indices() to ensure consistency.
     """
     
     def __init__(
@@ -96,6 +101,18 @@ class BundleAdjustmentData:
         self.observations = observations
         self.camera_model = camera_model
     
+    def remap_observations_to_dense_indices(self, original_to_dense: dict[int, int]) -> None:
+        """
+        Update all observations' point_index in place so that they match the dense indices of points_3d.
+        
+        Args:
+            original_to_dense: Mapping from original point indices to dense indices (0..N-1)
+        """
+        for obs in self.observations:
+            if obs.point_index not in original_to_dense:
+                raise ValueError(f"Observation references point_index {obs.point_index} not in mapping.")
+            obs.point_index = original_to_dense[obs.point_index]
+
     def get_observation_matrices(self) -> Tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.float64]]:
         """
         Convert observations to matrix format for optimization.
@@ -155,7 +172,9 @@ class BundleAdjustmentData:
                 raise ValueError(f"Observation {i}: camera_index {obs.camera_index} out of range [0, {num_cameras-1}]")
             
             if obs.point_index < 0 or obs.point_index >= num_points:
-                raise ValueError(f"Observation {i}: point_index {obs.point_index} out of range [0, {num_points-1}]")
+                raise ValueError(f"Observation {i}: point_index {obs.point_index} out of range [0, {num_points-1}].\n"
+                                 f"  All point indices must be dense and match points_3d rows.\n"
+                                 f"  Use remap_observations_to_dense_indices() if needed.")
             
             if obs.image_point.shape != (2,):
                 raise ValueError(f"Observation {i}: image_point must be (2,), got {obs.image_point.shape}")

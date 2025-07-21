@@ -75,9 +75,9 @@ def compute_residuals(
         # Transform point to camera coordinates: X_cam = R @ (X_world - t)
         point_cam = camera_pose.rotation @ (point_3d - camera_pose.translation)
         
-        # Project to 2D using camera model
+        # Project to 2D using camera model (pass both points_3d and pose)
         point_2d_projected = data.camera_model.project(
-            point_3d.reshape(1, 3), 
+            point_3d.reshape(1, 3),
             (camera_pose.rotation, camera_pose.translation)
         )[0]  # Remove batch dimension
         
