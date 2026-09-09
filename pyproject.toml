@@ -31,6 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.10",
   "pytest>=7.4",
   "ruff>=0.6",
 ]
@@ -63,7 +64,9 @@ select = ["E", "F", "I", "UP"]
 known-first-party = ["bundle_adjustment"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 files = ["src/bundle_adjustment"]
 strict = true
 warn_unused_ignores = true
+follow_imports = "skip"
+ignore_missing_imports = true
