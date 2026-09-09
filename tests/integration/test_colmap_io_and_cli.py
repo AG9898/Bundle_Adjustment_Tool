@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 
 from bundle_adjustment.cli import main
-from bundle_adjustment.io import load_colmap_text, read_result_metadata
+from bundle_adjustment.io import (
+    load_colmap_text,
+    load_initialized_reconstruction,
+    read_result_metadata,
+)
 
 
 def _pixels(point: np.ndarray, translation_x: float) -> tuple[float, float]:
@@ -44,6 +48,42 @@ def _write_colmap_fixture(directory: Path) -> None:
     for point_id, point in points.items():
         point_lines.append(f"{point_id} {point[0]} {point[1]} {point[2]} 255 255 255 0")
     (directory / "points3D.txt").write_text("\n".join(point_lines) + "\n", encoding="utf-8")
+
+
+def _write_initialized_reconstruction(directory: Path) -> None:
+    points = np.array([[0.0, 0.0, 10.0], [1.0, 0.5, 12.0]], dtype=np.float64)
+    directory.mkdir()
+    np.savez_compressed(
+        directory / "reconstruction.npz",
+        camera_rotations=np.stack((np.eye(3), np.eye(3))),
+        camera_translations=np.array([[0.0, 0.0, 0.0], [-0.9, 0.0, 0.0]]),
+        camera_intrinsics=np.array([[800.0, 810.0, 320.0, 240.0]] * 2),
+        camera_identifiers=np.array(["1:first.jpg", "2:second.jpg"]),
+        points=points,
+        point_identifiers=np.array(["42", "77"]),
+        observation_camera_indices=np.array([0, 0, 1, 1]),
+        observation_point_indices=np.array([0, 1, 0, 1]),
+        observation_xy=np.array(
+            [
+                _pixels(points[0], 0.0),
+                _pixels(points[1], 0.0),
+                _pixels(points[0], -0.9),
+                _pixels(points[1], -0.9),
+            ]
+        ),
+        observation_weights=np.ones(4),
+    )
+    (directory / "reconstruction.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "artifact_type": "initialized_reconstruction",
+                "coordinate_convention": "world_to_camera",
+                "problem_name": "triangulated-fixture",
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_colmap_text_loader_preserves_calibration_pose_and_dense_ids(tmp_path: Path) -> None:
@@ -84,3 +124,19 @@ def test_cli_validates_optimizes_and_reports_versioned_artifacts(
     assert main(("report", str(output_directory), "--json")) == 0
     report = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
     assert report["termination_reason"] == optimization["termination_reason"]
+
+
+def test_initialized_reconstruction_is_validated_and_accepted_by_cli(
+    tmp_path: Path, capsys: object
+) -> None:
+    directory = tmp_path / "initialized"
+    _write_initialized_reconstruction(directory)
+
+    problem = load_initialized_reconstruction(directory)
+
+    assert problem.name == "triangulated-fixture"
+    assert problem.num_cameras == 2
+    assert problem.num_points == 2
+    assert main(("validate", str(directory))) == 0
+    validated = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert validated["problem_name"] == "triangulated-fixture"

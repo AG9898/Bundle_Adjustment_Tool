@@ -14,8 +14,10 @@ consistent, explain what happened, and save a reproducible result.
 
 This is pre-release software (`0.1.0a0`). The current implementation supports
 calibrated pinhole bundle adjustment and COLMAP text sparse models with
-`PINHOLE` and `SIMPLE_PINHOLE` cameras. The public API and file schema are
-documented, but should be pinned when used in a production system.
+`PINHOLE` and `SIMPLE_PINHOLE` cameras. It also accepts schema-v1 initialized
+reconstructions produced by the companion Spatial Intersection Tool. The public
+API and file schema are documented, but should be pinned when used in a
+production system.
 
 ## Install
 
@@ -48,6 +50,21 @@ bundle-adjust optimize path/to/sparse/0 output/ba-result \
 
 bundle-adjust report output/ba-result
 ```
+
+### Quick start: pipeline hand-off
+
+An initialized-reconstruction directory containing `reconstruction.npz` and
+`reconstruction.json` may be passed to the same commands. This is the
+versioned artifact emitted by `spatial-intersect triangulate`:
+
+```bash
+bundle-adjust validate initialized/
+bundle-adjust optimize initialized/ output/ba-result --loss huber
+```
+
+The artifact is accepted only when it declares schema version 1 and the shared
+`world_to_camera` pose convention; the loader does not guess fields from an
+unrelated result directory.
 
 The command refuses to overwrite a non-empty output directory unless
 `--overwrite` is supplied. It exits with status 0 only when the optimizer

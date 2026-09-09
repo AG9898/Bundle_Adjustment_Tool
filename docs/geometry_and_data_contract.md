@@ -114,6 +114,19 @@ implemented.
 Use `read_result_metadata` or `bundle-adjust report` rather than assuming a
 future schema can be interpreted as version 1.
 
+## Initialized reconstruction import
+
+`load_initialized_reconstruction(directory)` consumes the schema-v1 hand-off
+artifact produced by the Spatial Intersection Tool. It requires
+`reconstruction.json` to identify `initialized_reconstruction`, schema version
+1, and the `world_to_camera` convention. `reconstruction.npz` must contain
+per-camera rotations, translations, pinhole intrinsics and identifiers; world
+points and identifiers; and dense camera/point/measurement/weight arrays.
+
+This input artifact is distinct from the `result.npz` and `result.json` output
+created by `save_result`. The latter records an optimization result and is not
+silently treated as a new initialization.
+
 ## Termination states
 
 `converged_step` means an accepted update was below `step_tolerance`.

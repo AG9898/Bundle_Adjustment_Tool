@@ -8,8 +8,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
-from .io import load_colmap_text, read_result_metadata, save_result
-from .models import OptimizationOptions
+from .io import (
+    load_colmap_text,
+    load_initialized_reconstruction,
+    read_result_metadata,
+    save_result,
+)
+from .models import BundleProblem, OptimizationOptions
 from .optimizer import optimize
 from .validation import validate_problem
 
@@ -37,20 +42,31 @@ def _problem_summary(
     }
 
 
+def _load_input_problem(path: Path) -> BundleProblem:
+    """Load either a COLMAP text model or an initialized-reconstruction artifact."""
+    if (path / "reconstruction.json").is_file() or (path / "reconstruction.npz").is_file():
+        return load_initialized_reconstruction(path)
+    return load_colmap_text(path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the parser used by the ``bundle-adjust`` console command."""
     parser = argparse.ArgumentParser(
         prog="bundle-adjust",
-        description="Validate and refine initialized COLMAP text reconstructions.",
+        description="Validate and refine initialized COLMAP or pipeline reconstructions.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    validate_parser = subcommands.add_parser("validate", help="validate a COLMAP text model")
-    validate_parser.add_argument("model_directory", type=Path)
+    validate_parser = subcommands.add_parser(
+        "validate", help="validate an initialized reconstruction"
+    )
+    validate_parser.add_argument("input_directory", type=Path)
 
-    optimize_parser = subcommands.add_parser("optimize", help="optimize a COLMAP text model")
-    optimize_parser.add_argument("model_directory", type=Path)
+    optimize_parser = subcommands.add_parser(
+        "optimize", help="optimize an initialized reconstruction"
+    )
+    optimize_parser.add_argument("input_directory", type=Path)
     optimize_parser.add_argument("output_directory", type=Path)
     optimize_parser.add_argument("--max-iterations", type=int, default=50)
     optimize_parser.add_argument("--initial-damping", type=float, default=1e-3)
@@ -73,7 +89,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parsed = parser.parse_args(arguments)
     try:
         if parsed.command == "validate":
-            problem = load_colmap_text(parsed.model_directory)
+            problem = _load_input_problem(parsed.input_directory)
             validate_problem(problem, OptimizationOptions())
             print(
                 json.dumps(
@@ -88,7 +104,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             )
             return 0
         if parsed.command == "optimize":
-            problem = load_colmap_text(parsed.model_directory)
+            problem = _load_input_problem(parsed.input_directory)
             result = optimize(problem, _options_from_arguments(parsed))
             save_result(result, parsed.output_directory, overwrite=parsed.overwrite)
             print(
