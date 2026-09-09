@@ -1,0 +1,18 @@
+# Local planning notes
+DIRECTION.md
+
+# Python bytecode and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and build artifacts
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Generated diagnostics
+*.png
