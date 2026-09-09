@@ -1,251 +1,133 @@
-# Bundle Adjustment Tool
+# Bundle Adjustment
 
-A Python library for precise and efficient photogrammetric bundle adjustment using sparse Levenberg–Marquardt optimization and Schur complement solvers.  
+Bundle Adjustment is a correctness-first Python library and command-line tool
+for refining initialized sparse reconstructions. It is designed for
+computer-vision, photogrammetry, robotics, graphics, and serious student
+projects that already have calibrated cameras, 3D landmarks, and 2D feature
+observations.
 
----
+It is not an SfM pipeline: it does not match features, triangulate points, or
+operate on raw images. Its job is to make an existing reconstruction more
+consistent, explain what happened, and save a reproducible result.
 
-## Features
+## Status
 
-- **Sparse Levenberg–Marquardt solver** with adaptive damping
-- **Block-sparse Schur complement reduction** for efficient large-scale optimization
-- **Pinhole camera model** with optional radial distortion support
-- **Structured data classes** for cameras, observations, and 3D points
-- **Synthetic dataset generation** for validation and testing
-- **Comprehensive diagnostics** including reprojection error plots and statistics
-- **3D visualization** of cameras and reconstructed points
-- **Convergence analysis** with damping parameter sensitivity testing
-- **Type annotations** throughout for code clarity and IDE support
+This is pre-release software (`0.1.0a0`). The current implementation supports
+calibrated pinhole bundle adjustment and COLMAP text sparse models with
+`PINHOLE` and `SIMPLE_PINHOLE` cameras. The public API and file schema are
+documented, but should be pinned when used in a production system.
 
----
-
-## Project Structure
-
-```
-src/
-├── data/           # Camera models and observation structures
-│   ├── camera_models.py    # Pinhole camera with projection
-│   └── observations.py     # CameraPose, Observation, BundleAdjustmentData
-├── core/           # Core optimization components
-│   ├── bundle_adjustment.py # Main BA interface (future)
-│   └── residuals.py        # Residual computation and Jacobians
-├── solvers/        # Optimization algorithms
-│   ├── sparse_lm_solver.py # Levenberg-Marquardt implementation
-│   ├── schur_complement.py # Block-sparse Schur complement solver
-│   └── jacobians.py        # Analytical Jacobian computations
-├── visualizations/ # Plotting and diagnostics
-│   ├── plot_reprojection_error.py # Error histograms and scatter plots
-│   └── plot_cameras.py     # 3D camera and point visualization
-└── tests/          # Validation and testing
-    ├── test_synthetic_dataset.py # Comprehensive synthetic testing
-    └── test_convergence.py       # Damping behavior analysis
-
-main.py             # Entry point with end-to-end demonstration
-requirements.txt    # Python dependencies
-docs/
-└── design_overview.md # Technical architecture and design rationale
-```
-
----
-
-## Installation
+## Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/Bundle_adjustment_tool.git
-cd Bundle_adjustment_tool
-
-# Install dependencies
-pip install -r requirements.txt
+python -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install .
 ```
 
-### Dependencies
-
-- **numpy** - Numerical computing and array operations
-- **scipy** - Sparse linear algebra and optimization
-- **matplotlib** - Visualization and plotting
-
----
-
-##  Usage
-
-### Quick Start
-
-Run the complete bundle adjustment demonstration:
+For contributors, install development tools instead:
 
 ```bash
-# Synthetic data (default)
-python main.py --dataset synthetic
-
-# COLMAP data
-python main.py --dataset colmap --images_txt path/to/images.txt --points3D_txt path/to/points3D.txt
+.venv/bin/python -m pip install -e '.[dev]'
 ```
 
-This will:
-1. Load or generate a dataset (synthetic or COLMAP)
-2. Add realistic perturbations to initial parameters (synthetic only)
-3. Run sparse Levenberg-Marquardt optimization
-4. Display comprehensive visualizations and statistics
+## Quick start: COLMAP text model
 
-### Visual Outputs
+The input directory must contain COLMAP's `cameras.txt`, `images.txt`, and
+`points3D.txt` files. Validate the whole model before running an optimization:
 
-The demonstration produces:
-- **Reprojection error histograms** (before/after optimization)
-- **3D scene visualizations** showing cameras and points
-- **Convergence curves** and damping parameter evolution
-- **Detailed performance metrics** and statistics
+```bash
+bundle-adjust validate path/to/sparse/0
+```
 
-### Code Example
+Run a robust solve and save arrays plus a JSON report:
+
+```bash
+bundle-adjust optimize path/to/sparse/0 output/ba-result \
+  --loss huber --huber-delta 2.0 --max-iterations 50
+
+bundle-adjust report output/ba-result
+```
+
+The command refuses to overwrite a non-empty output directory unless
+`--overwrite` is supplied. It exits with status 0 only when the optimizer
+reaches a convergence criterion; it still writes the result and diagnostics if
+it stops at the iteration limit.
+
+## Library API
 
 ```python
-from src.data.camera_models import CameraModel
-from src.data.observations import BundleAdjustmentData, CameraPose, Observation
-from src.solvers.sparse_lm_solver import SparseLMSolver
+from bundle_adjustment import OptimizationOptions, optimize
+from bundle_adjustment.io import load_colmap_text, save_result
 
-# Create camera model
-camera_model = CameraModel(focal_length=1000.0, principal_point=(640, 480))
-
-# Set up bundle adjustment data
-bundle_data = BundleAdjustmentData(
-    camera_poses=camera_poses,
-    points_3d=points_3d,
-    observations=observations,
-    camera_model=camera_model
+problem = load_colmap_text("path/to/sparse/0")
+result = optimize(
+    problem,
+    OptimizationOptions(loss="huber", huber_delta=2.0, max_iterations=50),
 )
 
-# Run optimization
-solver = SparseLMSolver(data=bundle_data, max_iterations=20)
-optimized_poses, optimized_points, final_residual = solver.run()
+print(result.termination_reason, result.diagnostics.final_rmse)
+save_result(result, "output/ba-result")
 ```
 
----
+`BundleProblem`, `Camera`, `Pose`, `CameraIntrinsics`, and `Observation` are
+also public if another system needs to construct a problem directly.
 
-## Testing
+## Geometry and solver contract
 
-Run comprehensive tests to validate the implementation:
+The sole pose convention is world to camera:
+
+```text
+x_camera = R_world_to_camera @ X_world + t_world_to_camera
+C_world  = -R_world_to_camera.T @ t_world_to_camera
+```
+
+The solver uses a left-SE(3) pose increment and does not mutate the supplied
+problem. By default it fixes camera 0 and landmark 0 to remove the global pose
+and scale gauge; supply explicit fixed indices or disable automatic gauge fixing
+when your application owns those constraints. All initially observed points must
+have positive camera depth.
+
+The reference backend is sparse Levenberg–Marquardt with step acceptance,
+bounded damping, Huber or squared loss, per-observation weights, structured
+termination state, and residual diagnostics. It is intentionally a correctness
+baseline, not yet a claim of Ceres/g2o-scale performance.
+
+See [the geometry and data contract](docs/geometry_and_data_contract.md) for
+the full supported-format, parameterization, and artifact details.
+
+## Output artifacts
+
+Each optimization creates:
+
+- `result.npz` — poses, intrinsics, points, and observations;
+- `result.json` — schema version, package version, input counts, termination
+  reason, timing, residual metrics, and per-iteration history.
+
+These artifacts are intended for scripts and CI as well as human inspection.
+
+## Current limitations
+
+- Only calibrated `PINHOLE` and `SIMPLE_PINHOLE` COLMAP text cameras are
+  accepted. Distortion, fisheye, binary models, and camera-intrinsic refinement
+  are not implemented yet.
+- Feature matching, triangulation, raw-image processing, UI tooling,
+  incremental BA, GPU acceleration, covariance estimates, and a custom Schur
+  backend are out of scope for this release.
+- Large-scale performance should be benchmarked for the intended workload.
+
+## Development
 
 ```bash
-# Test synthetic dataset optimization
-python -m src.tests.test_synthetic_dataset
-
-# Test convergence behavior with different damping parameters
-python -m src.tests.test_convergence
+.venv/bin/python -m ruff check src/bundle_adjustment tests
+.venv/bin/python -m mypy
+.venv/bin/python -m pytest -q
 ```
 
-### Test Coverage
-
-- **Synthetic Dataset Testing**: Validates optimization correctness with known ground truth
-- **Convergence Analysis**: Tests damping parameter sensitivity and convergence behavior
-- **Visualization Testing**: Ensures proper plotting and diagnostics
-- **Robustness Testing**: Handles edge cases and numerical stability
-
----
-
-## Documentation
-
-### Technical Architecture
-
-See `/docs/design_overview.md` for detailed technical architecture and design rationale.
-
-### Key Components
-
-- **Camera Models**: Pinhole projection with optional distortion
-- **Data Structures**: Efficient representation of observations and poses
-- **Optimization**: Sparse LM with Schur complement for scalability
-- **Visualization**: Comprehensive diagnostics and 3D scene rendering
-
----
-
-##  Assumptions & Scope
-
-This tool is designed to perform bundle adjustment for refinement purposes only.
-It assumes:
-
-- **Initial Interior Orientation Parameters (IOP)** are already known or provided (e.g., from lab calibration, metadata, or SfM software outputs).
-
-- **Initial Exterior Orientation Parameters (EOP)** are available from prior Structure-from-Motion (SfM) processes (e.g., COLMAP, OpenMVG).
-
-This repository does not include routines for recovering initial orientations from tie points or raw photo measurements.
-Such functionality is typically performed in upstream photogrammetric software prior to bundle adjustment.
-
----
-
-## Technical Details
-
-### Algorithm
-
-The implementation uses:
-- **Levenberg-Marquardt** optimization with adaptive damping
-- **Schur complement** reduction for efficient large-scale problems
-- **Analytical Jacobians** for precision and speed
-- **Block-sparse matrices** for memory efficiency
-
-### Performance
-
-- **Scalable**: Handles hundreds of cameras and thousands of points
-- **Efficient**: Sparse matrix operations and optimized linear algebra
-- **Robust**: Adaptive damping and convergence monitoring
-- **Precise**: Analytical derivatives and numerical stability
-
----
-
-## Examples (Coming Soon)
-
-Planned additions for:
-- **Benchmark datasets** (BAL, 1DSfM, etc.)
-- **Comparison to ground truth** with real photogrammetric data
-- **Real-world dataset adapters** (COLMAP, OpenMVS, etc.)
-- **Performance benchmarks** against other BA implementations
-
----
-
-## Contributing
-
-We welcome contributions! Areas of interest:
-
-- **Robust loss functions** (Huber, Cauchy, etc.)
-- **GPU backends** (CUDA, OpenCL acceleration)
-- **Real-world dataset adapters** (COLMAP, Bundler, etc.)
-- **Advanced camera models** (fisheye, omnidirectional)
-- **Performance optimizations** and profiling tools
-- **Documentation improvements** and tutorials
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -r requirements.txt
-
-# Run tests
-python -m pytest src/tests/
-
-# Run linting
-python -m flake8 src/
-```
-
----
+The test suite includes finite-difference checks for the projection Jacobians,
+synthetic optimizer convergence, and an end-to-end COLMAP/CLI fixture. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
 
 ## License
 
-MIT License - see LICENSE file for details.
-
----
-
-## Acknowledgments
-
-This project builds upon established photogrammetric and computer vision research, particularly:
-- Levenberg-Marquardt optimization techniques
-- Schur complement methods for bundle adjustment
-- Sparse matrix algorithms for large-scale optimization
-
----
-
-## Contact
-
-For questions, issues, or contributions:
-- Open an issue on GitHub
-- Submit a pull request
-- Contact the maintainers
-
----
-
-*Built for the computer vision and photogrammetry community* 
+[MIT](LICENSE)
